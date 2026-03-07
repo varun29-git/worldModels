@@ -24,16 +24,26 @@ def mdn_loss(pi, mu, sigma, z_next):
     return loss
 
 
-def train(model, dataloader, optimizer, device):
+def train(model, vae, dataloader, optimizer, device):
 
     model.train()
 
     total_loss = 0
 
-    for z, a in dataloader:
+    for obs, a in dataloader:
 
-        z = z.to(device)
+        obs = obs.to(device)
         a = a.to(device)
+        
+        # pass sequence of observations through VAE to get latents z
+        batch_size, seq_len, c, h, w = obs.size()
+        obs_flat = obs.view(batch_size * seq_len, c, h, w)
+        
+        with torch.no_grad():
+            mu, logvar = vae.encode(obs_flat)
+            z_flat = vae.reparameterize(mu, logvar)
+            
+        z = z_flat.view(batch_size, seq_len, -1)
 
         z_input = z[:, :-1]
         z_next = z[:, 1:]
@@ -65,6 +75,52 @@ if __name__ == "__main__":
     hidden_dim = 256
     num_gaussians = 5
 
+    # ------------------ Added Dataloader ------------------
+    import pickle
+    import torchvision.transforms as transforms
+    from torch.utils.data import Dataset, DataLoader
+    from model.vae import VAE
+    
+    class SequenceDataset(Dataset):
+        def __init__(self, dataset_path, seq_len=300):
+            with open(dataset_path, "rb") as f:
+                self.data = pickle.load(f)
+            self.seq_len = seq_len
+            self.transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.Resize((64,64)),
+                transforms.ToTensor()
+            ])
+            
+        def __len__(self):
+            return len(self.data)
+            
+        def __getitem__(self, idx):
+            episode = self.data[idx]
+            obs = episode["observations"][:self.seq_len]
+            actions = episode["actions"][:self.seq_len]
+            
+            # pad if sequence is too short
+            if len(obs) < self.seq_len:
+                # In CarRacing we usually have 1000 steps, but collect_data limits episodes if done early.
+                pad_len = self.seq_len - len(obs)
+                obs.extend([obs[-1]] * pad_len) 
+                actions.extend([actions[-1]] * pad_len)
+                
+            obs_tensor = torch.stack([self.transform(o) for o in obs])
+            action_tensor = torch.tensor(actions, dtype=torch.float32)
+            return obs_tensor, action_tensor
+
+    print("Loading dataset...")
+    dataset = SequenceDataset("carRacing_dataset.pkl", seq_len=100)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    
+    print("Loading VAE...")
+    vae = VAE(input_shape=(3,64,64), latent_dim=z_dim).to(device)
+    vae.load_state_dict(torch.load("vae.pt", map_location=device, weights_only=True))
+    vae.eval()
+    # -----------------------------------------------------
+
     model = MDN_RNN(z_dim, action_dim, hidden_dim, num_gaussians).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -73,7 +129,7 @@ if __name__ == "__main__":
 
     for epoch in range(num_epochs):
 
-        loss = train(model, dataloader, optimizer, device)
+        loss = train(model, vae, dataloader, optimizer, device)
 
         print(f"Epoch {epoch} | Loss: {loss:.4f}")
 
