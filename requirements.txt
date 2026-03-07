@@ -3,5 +3,4 @@ torchvision
 gymnasium
 numpy
 matplotlib
-pickle
 cma
