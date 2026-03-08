@@ -125,7 +125,7 @@ if __name__ == "__main__":
     model = MDN_RNN(z_dim, action_dim, hidden_dim, num_gaussians).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5, verbose=True)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
 
     num_epochs = 100
 
